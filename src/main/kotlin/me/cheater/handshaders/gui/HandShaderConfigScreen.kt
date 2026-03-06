@@ -16,6 +16,11 @@ class HandShaderConfigScreen(private val parent: Screen?) : Screen(Component.lit
     companion object {
         private const val SV_STEPS = 24
         private const val HUE_STEPS = 32
+        private const val VALUE_SLIDER_X = 10
+        private const val VALUE_SLIDER_WIDTH = 142
+        private const val VALUE_SLIDER_BAR_OFFSET_Y = 18
+        private const val VALUE_SLIDER_BAR_HEIGHT = 8
+        private const val VALUE_SLIDER_KNOB_OVERFLOW = 2
     }
 
     private lateinit var enabledButton: Button
@@ -110,7 +115,7 @@ class HandShaderConfigScreen(private val parent: Screen?) : Screen(Component.lit
             guiGraphics = guiGraphics,
             x = svX,
             y = panelY + 132,
-            width = 142,
+            width = VALUE_SLIDER_WIDTH,
             label = "Fill Alpha",
             description = "Solid tint inside the hand/item",
             value = fillAlphaValue,
@@ -120,7 +125,7 @@ class HandShaderConfigScreen(private val parent: Screen?) : Screen(Component.lit
             guiGraphics = guiGraphics,
             x = svX,
             y = panelY + 156,
-            width = 142,
+            width = VALUE_SLIDER_WIDTH,
             label = "Image Alpha",
             description = "Opacity of the selected PNG overlay",
             value = imageAlphaValue,
@@ -244,12 +249,18 @@ class HandShaderConfigScreen(private val parent: Screen?) : Screen(Component.lit
         guiGraphics.drawString(font, label, x, y, 0xFFFFFF)
         guiGraphics.drawString(font, description, x, y + 9, 0x9AA3AD)
 
-        val barY = y + 18
-        guiGraphics.fill(x, barY, x + width, barY + 8, 0xFF22272E.toInt())
+        val barY = y + VALUE_SLIDER_BAR_OFFSET_Y
+        guiGraphics.fill(x, barY, x + width, barY + VALUE_SLIDER_BAR_HEIGHT, 0xFF22272E.toInt())
         val filled = (value.coerceIn(0, 255) / 255f * width).roundToInt()
-        guiGraphics.fill(x, barY, x + filled, barY + 8, 0xFF59C3C3.toInt())
+        guiGraphics.fill(x, barY, x + filled, barY + VALUE_SLIDER_BAR_HEIGHT, 0xFF59C3C3.toInt())
         val knobX = x + filled.coerceIn(0, width)
-        guiGraphics.fill(knobX - 1, barY - 2, knobX + 1, barY + 10, 0xFFFFFFFF.toInt())
+        guiGraphics.fill(
+            knobX - 1,
+            barY - VALUE_SLIDER_KNOB_OVERFLOW,
+            knobX + 1,
+            barY + VALUE_SLIDER_BAR_HEIGHT + VALUE_SLIDER_KNOB_OVERFLOW,
+            0xFFFFFFFF.toInt()
+        )
         val valueText = "$valuePrefix: $value"
         guiGraphics.drawString(font, valueText, x + width - font.width(valueText), y, 0xFFFFFF)
     }
@@ -273,8 +284,17 @@ class HandShaderConfigScreen(private val parent: Screen?) : Screen(Component.lit
 
     private fun svBounds(): IntArray = intArrayOf(panelX() + 10, panelY() + 16, panelX() + 138, panelY() + 144)
     private fun hueBounds(): IntArray = intArrayOf(panelX() + 143, panelY() + 16, panelX() + 153, panelY() + 144)
-    private fun fillSliderBounds(): IntArray = intArrayOf(panelX() + 10, panelY() + 146, panelX() + 156, panelY() + 154)
-    private fun imageSliderBounds(): IntArray = intArrayOf(panelX() + 10, panelY() + 170, panelX() + 156, panelY() + 178)
+    private fun fillSliderBounds(): IntArray = valueSliderBounds(panelY() + 132)
+    private fun imageSliderBounds(): IntArray = valueSliderBounds(panelY() + 156)
+
+    private fun valueSliderBounds(y: Int): IntArray {
+        val left = panelX() + VALUE_SLIDER_X - 1
+        val barY = y + VALUE_SLIDER_BAR_OFFSET_Y
+        val top = y
+        val right = left + VALUE_SLIDER_WIDTH + 2
+        val bottom = barY + VALUE_SLIDER_BAR_HEIGHT + VALUE_SLIDER_KNOB_OVERFLOW
+        return intArrayOf(left, top, right, bottom)
+    }
 
     private fun contains(mouseX: Double, mouseY: Double, left: Int, top: Int, right: Int, bottom: Int): Boolean {
         return mouseX >= left && mouseX <= right && mouseY >= top && mouseY <= bottom
