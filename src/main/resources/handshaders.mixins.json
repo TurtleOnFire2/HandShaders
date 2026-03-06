@@ -1,0 +1,16 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "me.cheater.handshaders.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "client": [
+    "accessor.GameRendererAccessor",
+    "accessor.LevelRendererAccessor",
+    "rendering.ItemInHandRendererOutlineMixin",
+    "rendering.LevelRendererHandOutlineMixin",
+    "rendering.SubmitNodeCollectionHandOutlineMixin"
+  ]
+}
