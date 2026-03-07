@@ -9,6 +9,7 @@ plugins {
 
 version = project.property("mod_version") as String
 group = project.property("maven_group") as String
+val imguiVersion = project.property("imgui_version") as String
 
 base {
     archivesName.set(project.property("archives_base_name") as String)
@@ -42,6 +43,21 @@ dependencies {
     modImplementation("net.fabricmc:fabric-loader:${project.property("loader_version")}")
     modImplementation("net.fabricmc:fabric-language-kotlin:${project.property("kotlin_loader_version")}")
     modImplementation("net.fabricmc.fabric-api:fabric-api:${project.property("fabric_version")}")
+
+    val includeImplementation = fun(coordinate: String) {
+        implementation(coordinate)
+        include(coordinate)
+    }
+
+    arrayOf(
+        "io.github.spair:imgui-java-binding:$imguiVersion",
+        "io.github.spair:imgui-java-lwjgl3:$imguiVersion",
+        "io.github.spair:imgui-java-natives-windows:$imguiVersion",
+        "io.github.spair:imgui-java-natives-linux:$imguiVersion",
+        "io.github.spair:imgui-java-natives-macos:$imguiVersion",
+        "org.reflections:reflections:0.10.2",
+        "org.javassist:javassist:3.29.2-GA"
+    ).forEach(includeImplementation)
 }
 
 tasks.processResources {

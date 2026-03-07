@@ -7,6 +7,9 @@
     "defaultRequire": 1
   },
   "client": [
+    "GameRendererMixin",
+    "MinecraftMixin",
+    "accessor.FeatureRenderDispatcherAccessor",
     "accessor.GameRendererAccessor",
     "accessor.LevelRendererAccessor",
     "rendering.ItemInHandRendererOutlineMixin",

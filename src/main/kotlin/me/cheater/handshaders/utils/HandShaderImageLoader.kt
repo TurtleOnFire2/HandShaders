@@ -136,5 +136,8 @@ object HandShaderImageLoader {
 
     fun getImageData(name: String): ImageData? = loadedImages[normalizeName(name)]
 
+    fun getImageNames(): Array<String> =
+        arrayOf("No image") + loadedImages.keys.sorted().toTypedArray()
+
     fun imageExists(name: String): Boolean = loadedImages.containsKey(normalizeName(name))
 }

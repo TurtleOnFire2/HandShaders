@@ -18,6 +18,7 @@ public class ItemInHandRendererOutlineMixin {
     )
     private void handshaders$captureHandPass(float partialTick, PoseStack poseStack, SubmitNodeCollector submitNodeCollector, LocalPlayer localPlayer, int light, CallbackInfo ci) {
         HandShaderRenderer.INSTANCE.captureBeforeHandRender();
+        HandShaderRenderer.INSTANCE.suppressMainColorWritesIfNeeded();
     }
 
     @Inject(
@@ -25,6 +26,6 @@ public class ItemInHandRendererOutlineMixin {
         at = @At("TAIL")
     )
     private void handshaders$outlineHandPass(float partialTick, PoseStack poseStack, SubmitNodeCollector submitNodeCollector, LocalPlayer localPlayer, int light, CallbackInfo ci) {
-        HandShaderRenderer.INSTANCE.applyAfterHandRender();
+        HandShaderRenderer.INSTANCE.finishHandSubmission();
     }
 }

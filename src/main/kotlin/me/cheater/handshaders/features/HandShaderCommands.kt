@@ -1,6 +1,6 @@
 package me.cheater.handshaders.features
 
-import me.cheater.handshaders.gui.HandShaderConfigScreen
+import me.cheater.handshaders.gui.Settings
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.literal
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback
@@ -14,7 +14,7 @@ object HandShaderCommands {
             ClientTickEvents.END_CLIENT_TICK.register { client ->
                 if (openRequested) {
                     openRequested = false
-                    client.setScreen(HandShaderConfigScreen(client.screen))
+                    Settings.open()
                 }
             }
             tickRegistered = true

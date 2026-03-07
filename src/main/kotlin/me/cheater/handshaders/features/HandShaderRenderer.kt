@@ -1,7 +1,9 @@
 package me.cheater.handshaders.features
 
 import com.mojang.blaze3d.framegraph.FrameGraphBuilder
+import com.mojang.blaze3d.opengl.GlStateManager
 import com.mojang.blaze3d.pipeline.RenderTarget
+import com.mojang.blaze3d.pipeline.TextureTarget
 import com.mojang.blaze3d.systems.RenderSystem
 import me.cheater.handshaders.HandShadersClient
 import me.cheater.handshaders.config.HandShaderConfig
@@ -12,10 +14,10 @@ import me.cheater.handshaders.utils.HandShaderImageLoader
 import net.minecraft.client.Minecraft
 import net.minecraft.client.renderer.LevelTargetBundle
 import net.minecraft.client.renderer.PostChain
+import net.minecraft.client.renderer.SubmitNodeCollector
 import net.minecraft.resources.ResourceLocation
 
 object HandShaderRenderer {
-    private val entityOutlinePostChainId: ResourceLocation = ResourceLocation.withDefaultNamespace("entity_outline")
     private val cleanupPostChainId: ResourceLocation =
         ResourceLocation.fromNamespaceAndPath(HandShadersClient.MOD_ID, "hand_outline_cleanup")
 
@@ -26,20 +28,28 @@ object HandShaderRenderer {
     private var modelOverrideCount = 0
     private var modelPartOverrideCount = 0
     private var lastDebugLogMs = 0L
+    private var preHandTarget: TextureTarget? = null
+    private var cleanHandTarget: TextureTarget? = null
+    private var mainColorMaskSuppressed = false
+    private var handCompositePending = false
+    private var outlineBatchFlushed = false
 
     fun register() {}
 
     @JvmStatic
     fun captureBeforeHandRender() {
-        if (!HandShaderConfig.enabled) return
+        if (!HandShaderConfig.enabled || (!HandShaderConfig.shouldComposite() && !HandShaderConfig.renderOutline())) return
 
         frameIndex++
         overrideCount = 0
         itemOverrideCount = 0
         modelOverrideCount = 0
         modelPartOverrideCount = 0
+        outlineBatchFlushed = false
 
         val mc = Minecraft.getInstance()
+        capturePreHandTarget(mc.mainRenderTarget)
+
         if ((mc.levelRenderer as LevelRendererAccessor).backingEntityOutlineTarget == null) {
             mc.levelRenderer.initOutline()
         }
@@ -50,64 +60,161 @@ object HandShaderRenderer {
             return
         }
 
-        val encoder = RenderSystem.getDevice().createCommandEncoder()
-        if (outlineTarget.useDepth) {
-            encoder.clearColorAndDepthTextures(outlineTarget.colorTexture, 0, outlineTarget.depthTexture, 1.0)
-        } else {
-            encoder.clearColorTexture(outlineTarget.colorTexture, 0)
-        }
+        clearRenderTarget(outlineTarget)
 
         handOutlineActive = true
-        debugLog("capture ok: frame=$frameIndex target=${outlineTarget.width}x${outlineTarget.height} useDepth=${outlineTarget.useDepth}")
+        handCompositePending = true
+        debugLog("capture ok: frame=$frameIndex target=${outlineTarget.width}x${outlineTarget.height} useDepth=${outlineTarget.useDepth} bgCapture=${HandShaderConfig.requiresBackgroundCapture()}")
     }
 
     @JvmStatic
-    fun applyAfterHandRender() {
-        if (!handOutlineActive) {
-            debugLog("apply skipped: handOutlineActive=false")
+    fun selectHandSubmitCollector(defaultCollector: SubmitNodeCollector): SubmitNodeCollector {
+        return defaultCollector
+    }
+
+    @JvmStatic
+    fun suppressMainColorWritesIfNeeded() {
+        if (!HandShaderConfig.shouldHideBaseHandForGlass()) return
+    }
+
+    @JvmStatic
+    fun restoreMainColorWrites() {
+        if (!mainColorMaskSuppressed) return
+        GlStateManager._colorMask(true, true, true, true)
+        mainColorMaskSuppressed = false
+        debugLog("main color writes restored")
+    }
+
+    @JvmStatic
+    fun finishHandSubmission() {
+        if (!handCompositePending) {
+            debugLog("finish skipped: handCompositePending=false")
+            return
+        }
+
+        restoreMainColorWrites()
+        flushOutlineBatchIfNeeded()
+    }
+
+    @JvmStatic
+    fun applyAfterFeatureRender() {
+        if (!handCompositePending) {
             return
         }
 
         val mc = Minecraft.getInstance()
-        mc.renderBuffers().outlineBufferSource().endOutlineBatch()
+        val glassReplacementActive = HandShaderConfig.shouldHideBaseHandForGlass()
+        captureCleanHandTarget(mc.mainRenderTarget)
+        flushOutlineBatchIfNeeded()
+        if (glassReplacementActive) {
+            preHandTarget?.let { copyColor(it, mc.mainRenderTarget) }
+        } else {
+            cleanHandTarget?.let { copyColor(it, mc.mainRenderTarget) }
+        }
         val outlineTarget = (mc.levelRenderer as LevelRendererAccessor).backingEntityOutlineTarget
         val cleanupPostChain = mc.shaderManager.getPostChain(cleanupPostChainId, LevelTargetBundle.OUTLINE_TARGETS)
-        val postChain = mc.shaderManager.getPostChain(entityOutlinePostChainId, LevelTargetBundle.OUTLINE_TARGETS)
 
         if (outlineTarget != null) {
             cleanupPostChain?.let { executeOutlinePostChain(it, mc, outlineTarget) }
 
             val imageLocation = HandShaderImageLoader.getImageResourceLocation(HandShaderConfig.imageName)
-            if (HandShaderConfig.fillAlpha > 0 || (HandShaderConfig.imageAlpha > 0 && imageLocation != null)) {
+            if (HandShaderConfig.shouldComposite() || HandShaderConfig.renderOutline()) {
+                val sourceTarget = if (glassReplacementActive) {
+                    cleanHandTarget ?: preHandTarget ?: mc.mainRenderTarget
+                } else {
+                    cleanHandTarget ?: mc.mainRenderTarget
+                }
                 HandShaderCompositeUtil.composite(
-                    mainTarget = mc.mainRenderTarget,
+                    sourceTarget = sourceTarget,
+                    destinationTarget = mc.mainRenderTarget,
                     maskTarget = outlineTarget,
-                    color = HandShaderConfig.outlineColor(),
-                    fillAlpha = HandShaderConfig.fillAlpha,
-                    imageAlpha = HandShaderConfig.imageAlpha,
+                    backgroundTarget = preHandTarget,
                     imageTexture = imageLocation
                 )
-            }
-
-            if (postChain != null) {
-                executeOutlinePostChain(postChain, mc, outlineTarget)
                 debugLog(
-                    "postChain ok: frame=$frameIndex cleanup=${cleanupPostChain != null} " +
-                        "imageName='${HandShaderConfig.imageName}' image=${imageLocation != null} " +
-                        "fillAlpha=${HandShaderConfig.fillAlpha} imageAlpha=${HandShaderConfig.imageAlpha}"
+                    "composite ok: frame=$frameIndex dual=${HandShaderConfig.dualShaderMode()} modes=${HandShaderConfig.activeModes().joinToString { HandShaderConfig.shaderName(it) }} image=${imageLocation != null} outline=${HandShaderConfig.renderOutline()}"
                 )
-            } else {
-                mc.levelRenderer.doEntityOutline()
-                debugLog("postChain missing: outlineTarget=true postChain=false")
             }
+            clearRenderTarget(outlineTarget)
         } else {
-            debugLog("postChain missing: outlineTarget=false postChain=${postChain != null}")
+            debugLog("composite skipped: outlineTarget=false")
         }
 
         debugLog(
             "apply ok: frame=$frameIndex overrides=$overrideCount items=$itemOverrideCount models=$modelOverrideCount modelParts=$modelPartOverrideCount"
         )
         handOutlineActive = false
+        handCompositePending = false
+        outlineBatchFlushed = false
+    }
+
+    @JvmStatic
+    fun renderCustomGlassSubmitsIfNeeded() {
+        // No-op: custom replay path removed to keep transforms in vanilla hand space.
+    }
+
+    @JvmStatic
+    fun flushOutlineBatchIfNeeded() {
+        if (!handCompositePending || outlineBatchFlushed) return
+        val mc = Minecraft.getInstance()
+        mc.renderBuffers().outlineBufferSource().endOutlineBatch()
+        outlineBatchFlushed = true
+    }
+
+    private fun capturePreHandTarget(mainTarget: RenderTarget) {
+        if (!HandShaderConfig.requiresBackgroundCapture()) return
+
+        val width = mainTarget.width
+        val height = mainTarget.height
+        if (preHandTarget == null) {
+            preHandTarget = TextureTarget("${HandShadersClient.MOD_ID}_prehand", width, height, false)
+        } else if (preHandTarget?.width != width || preHandTarget?.height != height) {
+            preHandTarget?.resize(width, height)
+        }
+
+        val target = preHandTarget ?: return
+        copyColor(mainTarget, target)
+    }
+
+    private fun captureCleanHandTarget(mainTarget: RenderTarget) {
+        val width = mainTarget.width
+        val height = mainTarget.height
+        if (cleanHandTarget == null) {
+            cleanHandTarget = TextureTarget("${HandShadersClient.MOD_ID}_cleanhand", width, height, false)
+        } else if (cleanHandTarget?.width != width || cleanHandTarget?.height != height) {
+            cleanHandTarget?.resize(width, height)
+        }
+
+        val target = cleanHandTarget ?: return
+        copyColor(mainTarget, target)
+    }
+
+    private fun copyColor(source: RenderTarget, destination: RenderTarget) {
+        val sourceTexture = source.colorTexture ?: return
+        val destinationTexture = destination.colorTexture ?: return
+        val encoder = RenderSystem.getDevice().createCommandEncoder()
+        encoder.copyTextureToTexture(
+            sourceTexture,
+            destinationTexture,
+            0,
+            0,
+            0,
+            0,
+            0,
+            minOf(source.width, destination.width),
+            minOf(source.height, destination.height)
+        )
+    }
+
+    private fun clearRenderTarget(target: RenderTarget) {
+        val colorTexture = target.colorTexture ?: return
+        val encoder = RenderSystem.getDevice().createCommandEncoder()
+        if (target.useDepth) {
+            val depthTexture = target.depthTexture ?: return
+            encoder.clearColorAndDepthTextures(colorTexture, 0, depthTexture, 1.0)
+        } else {
+            encoder.clearColorTexture(colorTexture, 0)
+        }
     }
 
     private fun executeOutlinePostChain(postChain: PostChain, mc: Minecraft, outlineTarget: RenderTarget) {
@@ -123,7 +230,9 @@ object HandShaderRenderer {
     fun overrideOutlineColor(existingColor: Int): Int {
         if (!handOutlineActive || !HandShaderConfig.enabled) return existingColor
         overrideCount++
-        return HandShaderConfig.outlineColor().rgb
+        // Force a non-zero outline submit color so the outline pass runs, but keep it almost invisible.
+        // Visible outline tint is applied later in the composite shader via OutlineColor uniform.
+        return 0x01000000
     }
 
     @JvmStatic

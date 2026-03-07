@@ -26,6 +26,6 @@ void main() {
         }
     }
 
-    float solidAlpha = step(0.05, maxAlpha);
+    float solidAlpha = step(0.001, maxAlpha);
     fragColor = vec4(color * solidAlpha, solidAlpha);
 }
